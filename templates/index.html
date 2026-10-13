@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Forensic Evidence Ledger</title>
+  <style>
+    :root { color-scheme: light; font: 16px/1.5 system-ui, sans-serif; color: #17212b; background: #f3f6f8; }
+    body { max-width: 980px; margin: 2rem auto; padding: 0 1rem; }
+    h1, h2 { line-height: 1.2; }
+    .card { background: white; border: 1px solid #d8e0e6; border-radius: 8px; padding: 1.25rem; margin: 1rem 0; }
+    .notice { border-left: 4px solid #25714b; padding: .65rem 1rem; background: #edf8f1; margin: .5rem 0; overflow-wrap: anywhere; }
+    .notice.error { border-color: #b42318; background: #fff1f0; }
+    .warning { color: #7a271a; }
+    label { display: block; font-weight: 600; margin: .5rem 0; }
+    input, select, button { font: inherit; padding: .5rem; max-width: 100%; }
+    button { cursor: pointer; }
+    form { margin: .75rem 0; }
+    .record { border-top: 1px solid #e3e8ec; padding: .8rem 0; overflow-wrap: anywhere; }
+    .hash { font-family: ui-monospace, monospace; font-size: .9rem; }
+    .muted { color: #52616d; }
+  </style>
+</head>
+<body>
+  <h1>Forensic Evidence Ledger</h1>
+  <p class="muted">A local educational demo for file fingerprinting and hash-linked custody records.</p>
+
+  {% for category, message in get_flashed_messages(with_categories=true) %}
+    <div class="notice {{ 'error' if category == 'error' else '' }}" role="status">{{ message }}</div>
+  {% endfor %}
+
+  {% if ledger_error %}
+    <div class="notice error" role="alert">Ledger could not be read: {{ ledger_error }}</div>
+  {% elif chain_result.valid %}
+    <div class="notice" role="status">Ledger chain integrity: valid ({{ chain_result.count }} records)</div>
+  {% else %}
+    <div class="notice error" role="alert">Ledger chain integrity: invalid — {{ chain_result.error }}</div>
+  {% endif %}
+
+  <section class="card">
+    <h2>Register evidence</h2>
+    <p>Choose a file to store a local copy, calculate its SHA-256 fingerprint, and append a custody record.</p>
+    <form action="{{ url_for('add_evidence') }}" method="post" enctype="multipart/form-data">
+      <label for="new-evidence">Evidence file (maximum 16 MiB)</label>
+      <input id="new-evidence" type="file" name="evidence" required>
+      <button type="submit">Register file</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Verify evidence file</h2>
+    {% if records %}
+      <p>Compare a selected file's SHA-256 fingerprint with a registered record.</p>
+      <form action="{{ url_for('verify_evidence') }}" method="post" enctype="multipart/form-data">
+        <label for="record-id">Ledger record</label>
+        <select id="record-id" name="record_id" required>
+          {% for record in records %}
+            <option value="{{ record.id }}">#{{ record.index }} — {{ record.filename }} ({{ record.recorded_at }})</option>
+          {% endfor %}
+        </select>
+        <label for="verify-evidence">File to compare</label>
+        <input id="verify-evidence" type="file" name="evidence" required>
+        <button type="submit">Verify file</button>
+      </form>
+    {% else %}
+      <p class="muted">Register a file before verifying it.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Ledger chain check</h2>
+    <p>Recompute each record hash and confirm its link to the preceding record.</p>
+    <form action="{{ url_for('verify_ledger') }}" method="post">
+      <button type="submit">Verify ledger integrity</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Custody records</h2>
+    {% if records %}
+      {% for record in records %}
+        <article class="record">
+          <strong>Record #{{ record.index }} — {{ record.filename }}</strong>
+          <div class="muted">Recorded {{ record.recorded_at }} · ID {{ record.id }}</div>
+          <div class="hash">Evidence SHA-256: {{ record.evidence_sha256 }}</div>
+          <div class="hash">Record hash: {{ record.record_hash }}</div>
+        </article>
+      {% endfor %}
+    {% else %}
+      <p class="muted">No evidence has been registered.</p>
+    {% endif %}
+  </section>
+
+  <p class="warning"><strong>Educational limitations:</strong> This is a single-machine local hash chain, not a decentralized blockchain. A person with access to the files can alter or replace the ledger and recompute hashes. It does not establish identity, trusted time, legal admissibility, or production chain-of-custody controls.</p>
+</body>
+</html>
