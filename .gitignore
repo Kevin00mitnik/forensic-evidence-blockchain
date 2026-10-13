@@ -3,4 +3,5 @@ __pycache__/
 .venv/
 venv/
 data/
+contract/deployment.json
 .pytest_cache/

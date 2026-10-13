@@ -23,7 +23,13 @@
 </head>
 <body>
   <h1>Forensic Evidence Ledger</h1>
-  <p class="muted">A local educational demo for file fingerprinting and hash-linked custody records.</p>
+  <p class="muted">
+    {% if backend == 'ethereum' %}
+      Educational Ethereum demo connected to the configured local development chain.
+    {% else %}
+      Local educational demo for file fingerprinting and hash-linked custody records.
+    {% endif %}
+  </p>
 
   {% for category, message in get_flashed_messages(with_categories=true) %}
     <div class="notice {{ 'error' if category == 'error' else '' }}" role="status">{{ message }}</div>
@@ -32,14 +38,30 @@
   {% if ledger_error %}
     <div class="notice error" role="alert">Ledger could not be read: {{ ledger_error }}</div>
   {% elif chain_result.valid %}
-    <div class="notice" role="status">Ledger chain integrity: valid ({{ chain_result.count }} records)</div>
+    <div class="notice" role="status">
+      {% if backend == 'ethereum' %}
+        Ethereum contract is readable ({{ chain_result.count }} evidence records)
+      {% else %}
+        Local ledger chain integrity: valid ({{ chain_result.count }} records)
+      {% endif %}
+    </div>
   {% else %}
-    <div class="notice error" role="alert">Ledger chain integrity: invalid — {{ chain_result.error }}</div>
+    <div class="notice error" role="alert">
+      {% if backend == 'ethereum' %}
+        Ethereum verification failed — {{ chain_result.error }}
+      {% else %}
+        Local ledger chain integrity: invalid — {{ chain_result.error }}
+      {% endif %}
+    </div>
   {% endif %}
 
   <section class="card">
     <h2>Register evidence</h2>
-    <p>Choose a file to store a local copy, calculate its SHA-256 fingerprint, and append a custody record.</p>
+    {% if backend == 'ethereum' %}
+      <p>Store a local copy, calculate its SHA-256 fingerprint, and write the fingerprint and filename to the Ethereum contract.</p>
+    {% else %}
+      <p>Choose a file to store a local copy, calculate its SHA-256 fingerprint, and append a custody record to the local ledger.</p>
+    {% endif %}
     <form action="{{ url_for('add_evidence') }}" method="post" enctype="multipart/form-data">
       <label for="new-evidence">Evidence file (maximum 16 MiB)</label>
       <input id="new-evidence" type="file" name="evidence" required>
@@ -50,7 +72,7 @@
   <section class="card">
     <h2>Verify evidence file</h2>
     {% if records %}
-      <p>Compare a selected file's SHA-256 fingerprint with a registered record.</p>
+      <p>Compare the selected file's SHA-256 fingerprint with the registered record.</p>
       <form action="{{ url_for('verify_evidence') }}" method="post" enctype="multipart/form-data">
         <label for="record-id">Ledger record</label>
         <select id="record-id" name="record_id" required>
@@ -68,10 +90,14 @@
   </section>
 
   <section class="card">
-    <h2>Ledger chain check</h2>
-    <p>Recompute each record hash and confirm its link to the preceding record.</p>
+    <h2>{% if backend == 'ethereum' %}Ethereum records{% else %}Ledger chain check{% endif %}</h2>
+    {% if backend == 'ethereum' %}
+      <p>Read every evidence and custody entry from the deployed contract.</p>
+    {% else %}
+      <p>Recompute each record hash and confirm its link to the preceding record.</p>
+    {% endif %}
     <form action="{{ url_for('verify_ledger') }}" method="post">
-      <button type="submit">Verify ledger integrity</button>
+      <button type="submit">{% if backend == 'ethereum' %}Verify Ethereum records{% else %}Verify ledger integrity{% endif %}</button>
     </form>
   </section>
 
@@ -83,7 +109,28 @@
           <strong>Record #{{ record.index }} — {{ record.filename }}</strong>
           <div class="muted">Recorded {{ record.recorded_at }} · ID {{ record.id }}</div>
           <div class="hash">Evidence SHA-256: {{ record.evidence_sha256 }}</div>
-          <div class="hash">Record hash: {{ record.record_hash }}</div>
+          {% if backend == 'ethereum' %}
+            <div class="muted">Registered by {{ record.custodian }}</div>
+            {% if record.transaction_hash %}
+              <div class="hash">Latest transaction: {{ record.transaction_hash }} · block {{ record.block_number }}</div>
+            {% endif %}
+            <strong>Custody history</strong>
+            {% for entry in record.custody_history %}
+              <div class="muted">{{ entry.recorded_at }} · {{ entry.action }} · {{ entry.actor }}</div>
+            {% endfor %}
+            <form action="{{ url_for('record_custody') }}" method="post">
+              <input type="hidden" name="record_id" value="{{ record.id }}">
+              <label for="custody-action-{{ record.id }}">Add custody event</label>
+              <select id="custody-action-{{ record.id }}" name="action" required>
+                {% for action in custody_actions %}
+                  <option value="{{ action }}">{{ action }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit">Record on Ethereum</button>
+            </form>
+          {% else %}
+            <div class="hash">Record hash: {{ record.record_hash }}</div>
+          {% endif %}
         </article>
       {% endfor %}
     {% else %}
@@ -91,6 +138,10 @@
     {% endif %}
   </section>
 
-  <p class="warning"><strong>Educational limitations:</strong> This is a single-machine local hash chain, not a decentralized blockchain. A person with access to the files can alter or replace the ledger and recompute hashes. It does not establish identity, trusted time, legal admissibility, or production chain-of-custody controls.</p>
+  {% if backend == 'ethereum' %}
+    <p class="warning"><strong>Educational limitations:</strong> This demo writes to a local Ganache development chain using its unlocked test account. It is not a public network or production custody system. Evidence files remain on this computer; the filename, SHA-256 hash, wallet address, action labels, and approximate block timestamps are visible on the chain. Do not enter confidential filenames or upload real evidence. It does not establish legal identity, trusted time, admissibility, or production-grade chain-of-custody controls.</p>
+  {% else %}
+    <p class="warning"><strong>Educational limitations:</strong> This is a single-machine local hash chain, not a decentralized blockchain. A person with access to the files can alter or replace the ledger and recompute hashes. It does not establish identity, trusted time, legal admissibility, or production chain-of-custody controls.</p>
+  {% endif %}
 </body>
 </html>

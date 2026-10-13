@@ -7,14 +7,17 @@ import os
 import secrets
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from flask import Flask, flash, redirect, render_template, request, url_for
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
 from forensic_ledger import EvidenceLedger, LedgerError, sha256_file
+from ethereum_ledger import EthereumEvidenceLedger
 
 MAX_UPLOAD_BYTES = 16 * 1024 * 1024
+CUSTODY_ACTIONS = ("RECEIVED", "ACCESSED", "SEALED", "TRANSFERRED")
 
 
 def _save_evidence(upload: FileStorage, upload_dir: Path) -> tuple[str, Path, bool]:
@@ -55,17 +58,30 @@ def _save_evidence(upload: FileStorage, upload_dir: Path) -> tuple[str, Path, bo
                 pass
 
 
-def create_app(data_dir: str | Path | None = None) -> Flask:
+def create_app(
+    data_dir: str | Path | None = None,
+    evidence_service: Any | None = None,
+    backend: str | None = None,
+) -> Flask:
     app = Flask(__name__)
     default_data_dir = Path(__file__).resolve().parent / "data"
+    selected_backend = (backend or os.environ.get("EVIDENCE_BACKEND", "local")).lower()
+    if selected_backend not in {"local", "ethereum"}:
+        raise ValueError("EVIDENCE_BACKEND must be either 'local' or 'ethereum'.")
     app.config.update(
         SECRET_KEY=os.environ.get("EVIDENCE_SESSION_SECRET") or secrets.token_hex(32),
         DATA_DIR=Path(data_dir or os.environ.get("EVIDENCE_DATA_DIR", default_data_dir)),
-        MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES,
+        MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES + 64 * 1024,
+        EVIDENCE_BACKEND=selected_backend,
     )
     app.config["DATA_DIR"] = Path(app.config["DATA_DIR"])
     app.config["UPLOAD_DIR"] = app.config["DATA_DIR"] / "uploads"
-    ledger = EvidenceLedger(app.config["DATA_DIR"] / "ledger.json")
+    if evidence_service is not None:
+        ledger = evidence_service
+    elif selected_backend == "ethereum":
+        ledger = EthereumEvidenceLedger.from_environment()
+    else:
+        ledger = EvidenceLedger(app.config["DATA_DIR"] / "ledger.json")
 
     @app.after_request
     def add_security_headers(response):
@@ -97,6 +113,8 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
             records=list(reversed(records)),
             chain_result=chain_result,
             ledger_error=ledger_error,
+            backend=app.config["EVIDENCE_BACKEND"],
+            custody_actions=CUSTODY_ACTIONS,
         )
 
     @app.post("/evidence")
@@ -173,9 +191,41 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
     def verify_ledger():
         result = ledger.verify()
         if result["valid"]:
-            flash(f"Ledger chain is valid ({result['count']} records).", "success")
+            label = (
+                "Ethereum evidence records"
+                if selected_backend == "ethereum"
+                else "Ledger chain"
+            )
+            flash(f"{label} verified ({result['count']} records).", "success")
         else:
-            flash(f"Ledger chain is invalid: {result['error']}", "error")
+            label = (
+                "Ethereum verification"
+                if selected_backend == "ethereum"
+                else "Ledger chain"
+            )
+            flash(f"{label} failed: {result['error']}", "error")
+        return redirect(url_for("index"))
+
+    @app.post("/custody")
+    def record_custody():
+        if selected_backend != "ethereum":
+            flash("Custody history transactions are available in Ethereum mode.", "error")
+            return redirect(url_for("index"))
+        record_id = request.form.get("record_id", "")
+        action = request.form.get("action", "")
+        if action not in CUSTODY_ACTIONS:
+            flash("Choose a valid custody action.", "error")
+            return redirect(url_for("index"))
+        try:
+            record = ledger.record_custody(record_id, action)
+        except (LedgerError, ValueError) as exc:
+            flash(str(exc), "error")
+        else:
+            flash(
+                f"Custody action {action.lower()} recorded on Ethereum "
+                f"for evidence record {record['index']}.",
+                "success",
+            )
         return redirect(url_for("index"))
 
     return app
